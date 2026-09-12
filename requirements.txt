@@ -1,0 +1,6 @@
+mcp>=1.0.0
+ezdxf>=1.1.0
+pywin32>=306
+pyautogui>=0.9.54
+matplotlib>=3.8.0
+pillow>=10.0.0
