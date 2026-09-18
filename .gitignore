@@ -32,6 +32,8 @@ ENV/
 caxa_active_drawing.dxf
 output_*.dxf
 test_output_*.dxf
+output_*/
+extracted_images/
 
 # IDE
 .vscode/
