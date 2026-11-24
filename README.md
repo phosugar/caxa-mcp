@@ -71,71 +71,40 @@ graph TD
 
 ---
 
-## 📦 安装指南 (Installation)
+## 安装一次 供多个 Agent 使用
 
-### 1. 系统要求
-- **操作系统**：Windows 10 / Windows 11 (x64)
-- **CAD 软件**：CAXA CAD 电子图板 2023 或更高版本（默认安装于 `E:\CAXA` 或 `C:\CAXA`）
-- **Python 环境**：Python 3.10+
+在安装了 CAXA 电子图板的 Windows 机器上运行。支持通过标准 MCP stdio 启动本地进程的客户端，客户端可选用各自的配置格式。
 
-### 2. 克隆与安装
-
-```bash
-git clone https://github.com/phosugar/caxa-mcp.git
-cd caxa-mcp
-pip install -e .
+```powershell
+uv tool install 'git+https://github.com/phosugar/caxa-mcp.git@v0.3.0'
+$CaxaMcp = Join-Path (uv tool dir --bin) 'caxa-mcp.exe'
+& $CaxaMcp --version
+& $CaxaMcp --check
 ```
 
----
+如果 CAXA 装在自定义目录，可以先在当前 PowerShell 中设置 `$env:CAXA_PATH` 为 `CDRAFT_M.exe` 的绝对路径，再执行 `--check` 或生成客户端配置。配置输出会带上找到的 CAXA 路径。
 
-## ⚙️ 接入大模型客户端配置
+本地开发可在仓库内运行 `python -m pip install -e .`。运行需要渲染图纸的示例时安装 `python -m pip install -e ".[examples]"`。
 
-### 1. Claude Desktop 配置
-编辑 `%APPDATA%\Claude\claude_desktop_config.json`：
+## 接入客户端
 
-```json
-{
-  "mcpServers": {
-    "caxa": {
-      "command": "python",
-      "args": ["-m", "caxa_mcp.server"],
-      "env": {
-        "CAXA_PATH": "E:/CAXA/caxa/2023/Bin64/CDRAFT_M.exe"
-      }
-    }
-  }
-}
+配置中的 `command` 建议填写 `caxa-mcp.exe` 的绝对路径。客户端启动它时无需指定仓库目录或某个 IDE 的 Python 环境。
+
+| 客户端 | 生成配置 | 应用方式 |
+| :--- | :--- | :--- |
+| [Codex](https://developers.openai.com/codex/mcp) | `& $CaxaMcp --config codex` | 合并到 `~/.codex/config.toml` 的用户配置，也可用下面的 CLI 命令 |
+| [VS Code](https://code.visualstudio.com/docs/agent-customization/mcp-servers) | `& $CaxaMcp --config vscode` | 用 `MCP: Open User Configuration` 打开用户级 `mcp.json` 并合并 `servers.caxa` |
+| [Claude Code](https://code.claude.com/docs/en/mcp)、Claude Desktop、[Cursor](https://cursor.com/docs/mcp)、Antigravity 及同类客户端 | `& $CaxaMcp --config generic` | 合并 `mcpServers.caxa` 到客户端的用户配置。Claude Code 也可以用下面的 CLI 命令 |
+| [OpenCode](https://opencode.ai/docs/mcp-servers/) | `& $CaxaMcp --config opencode` | 合并输出到支持 `mcp.servers` 的用户配置 |
+
+```powershell
+codex mcp add caxa -- "$CaxaMcp"
+claude mcp add --transport stdio --scope user caxa -- "$CaxaMcp"
 ```
 
-### 2. Antigravity / Gemini CLI 配置
-编辑 `~/.gemini/config/mcp_config.json`：
+如果 CAXA 需要自定义路径，用上表生成的配置，或在客户端给服务添加 `CAXA_PATH` 环境变量。重新连接后可调用 `caxa_status` 检查 CAXA 安装状态。
 
-```json
-{
-  "mcpServers": {
-    "caxa": {
-      "command": "python",
-      "args": ["-m", "caxa_mcp.server"],
-      "env": {
-        "CAXA_PATH": "E:/CAXA/caxa/2023/Bin64/CDRAFT_M.exe"
-      }
-    }
-  }
-}
-```
-
-### 3. Cursor 配置
-在 `.cursor/mcp.json` 中配置：
-
-```json
-{
-  "mcpServers": {
-    "caxa": {
-      "command": "caxa-mcp"
-    }
-  }
-}
-```
+各客户端有独立的绘图会话和临时 DXF，窗口操作会在同一个 Windows 会话内依次执行。CAXA 窗口和当前查看的图纸由各客户端共用。仅支持远程 MCP 地址的客户端无法直接启动 Windows 本机的 stdio 服务。
 
 ---
 

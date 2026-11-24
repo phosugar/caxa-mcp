@@ -6,14 +6,16 @@ file opening, command line / keyboard input simulation, and screen capture.
 
 import csv
 import os
+import shutil
 import subprocess
 import time
 import winreg
-from threading import RLock
+from contextlib import contextmanager
 from typing import Any, Dict, Optional
 
 import win32api
 import win32con
+import win32event
 import win32gui
 import win32process
 from PIL import Image, ImageGrab
@@ -23,6 +25,23 @@ from pywintypes import error as WindowsError
 _OPEN_DIALOG_TITLES = {"打开", "打开文件", "open", "open file"}
 _FILENAME_EDIT_ID = 1148
 _POLL_INTERVAL = 0.15
+_WINDOW_MUTEX = r"Local\CAXA-MCP-Window"
+
+
+@contextmanager
+def _desktop_operation():
+    """Serialize CAXA window operations across clients in this Windows session."""
+    handle = win32event.CreateMutex(None, False, _WINDOW_MUTEX)
+    try:
+        state = win32event.WaitForSingleObject(handle, 45000)
+        if state not in (win32event.WAIT_OBJECT_0, win32event.WAIT_ABANDONED):
+            raise TimeoutError("CAXA is busy in another MCP client. Retry when its window operation finishes.")
+        try:
+            yield
+        finally:
+            win32event.ReleaseMutex(handle)
+    finally:
+        handle.Close()
 
 
 class CAXAController:
@@ -36,7 +55,6 @@ class CAXAController:
 
     def __init__(self, caxa_path: Optional[str] = None):
         self.caxa_path = self._resolve_caxa_path(caxa_path)
-        self._window_lock = RLock()
 
     def _resolve_caxa_path(self, override_path: Optional[str]) -> str:
         """Resolve the executable path of CAXA 电子图板."""
@@ -46,6 +64,21 @@ class CAXAController:
         env_path = os.environ.get("CAXA_PATH")
         if env_path and os.path.isfile(env_path):
             return os.path.abspath(env_path)
+
+        executable = shutil.which("CDRAFT_M.exe")
+        if executable:
+            return os.path.abspath(executable)
+
+        app_key = r"Software\Microsoft\Windows\CurrentVersion\App Paths\CDRAFT_M.exe"
+        for hkey in (winreg.HKEY_CURRENT_USER, winreg.HKEY_LOCAL_MACHINE):
+            try:
+                with winreg.OpenKey(hkey, app_key) as key:
+                    registered, _ = winreg.QueryValueEx(key, None)
+                registered = os.path.expandvars(registered.strip('"'))
+                if os.path.isfile(registered):
+                    return os.path.abspath(registered)
+            except OSError:
+                pass
 
         # Check default paths
         for path in self.DEFAULT_PATHS:
@@ -129,8 +162,9 @@ class CAXAController:
         return win32gui.GetForegroundWindow() == hwnd
 
     def activate_window(self) -> bool:
-        hwnd = self.find_main_window()
-        return bool(hwnd and self._activate(hwnd))
+        with _desktop_operation():
+            hwnd = self.find_main_window()
+            return bool(hwnd and self._activate(hwnd))
 
     @staticmethod
     def _wait_for(check, seconds: float):
@@ -153,7 +187,7 @@ class CAXAController:
         )
 
     def launch(self, wait_seconds: float = 10.0) -> Dict[str, Any]:
-        with self._window_lock:
+        with _desktop_operation():
             pids = self.get_caxa_pids()
             if not pids:
                 pids = [self._start().pid]
@@ -242,7 +276,7 @@ class CAXAController:
         if not os.path.isfile(path):
             raise FileNotFoundError(f"Drawing file not found: {path}")
 
-        with self._window_lock:
+        with _desktop_operation():
             pids = self.get_caxa_pids()
             hwnd = self.find_main_window(pids)
             reused = bool(pids)
@@ -313,7 +347,7 @@ class CAXAController:
 
     def send_command(self, command_str: str, press_enter: bool = True) -> bool:
         """Send a command only while the CAXA main window owns the foreground."""
-        with self._window_lock:
+        with _desktop_operation():
             hwnd = self.find_main_window()
             if not hwnd or not self._activate(hwnd):
                 return False
@@ -322,7 +356,7 @@ class CAXAController:
 
     def zoom_extents(self, hwnd: Optional[int] = None) -> bool:
         """Send the Z and E shortcut sequence without cancelling it halfway."""
-        with self._window_lock:
+        with _desktop_operation():
             hwnd = hwnd or self.find_main_window()
             if not hwnd or not self._activate(hwnd):
                 return False
@@ -333,7 +367,7 @@ class CAXAController:
 
     def capture_window(self) -> Optional[Image.Image]:
         """Capture only a confirmed CAXA window at its native resolution."""
-        with self._window_lock:
+        with _desktop_operation():
             hwnd = self.find_main_window()
             if not hwnd or self._owned_dialog(hwnd) or not self._activate(hwnd):
                 return None

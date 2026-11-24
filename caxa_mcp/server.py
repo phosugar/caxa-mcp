@@ -434,8 +434,14 @@ def caxa_export_drawing(output_path: str) -> Dict[str, Any]:
 
 
 def main():
-    """Entry point for the CAXA MCP Server."""
-    mcp.run()
+    """Run the standard stdio service or print local setup information."""
+    if __package__:
+        from .cli import run
+    else:
+        sys.path.insert(0, os.path.dirname(CURRENT_DIR))
+        from caxa_mcp.cli import run
+
+    raise SystemExit(run(controller, lambda: mcp.run(transport="stdio")))
 
 
 if __name__ == "__main__":

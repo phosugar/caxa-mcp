@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "caxa-mcp"
-version = "0.2.0"
+version = "0.3.0"
 description = "Model Context Protocol (MCP) server for CAXA CAD (数码大方 电子图板) - AI-driven GB-standard mechanical drafting and parametric modeling"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -39,13 +39,14 @@ classifiers = [
     "Operating System :: Microsoft :: Windows",
 ]
 dependencies = [
-    "mcp>=1.0.0",
+    "mcp>=1.28.1,<2",
     "ezdxf>=1.1.0",
     "pywin32>=306; platform_system=='Windows'",
-    "pyautogui>=0.9.54",
-    "matplotlib>=3.8.0",
     "pillow>=11.2.1",
 ]
+
+[project.optional-dependencies]
+examples = ["matplotlib>=3.8.0"]
 
 [project.urls]
 Homepage = "https://github.com/phosugar/caxa-mcp"
