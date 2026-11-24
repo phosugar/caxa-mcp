@@ -31,16 +31,16 @@
 
 ## 🌟 核心特性 (Key Features)
 
-- **10 个工业级 MCP Tools**：包含环境自检、CAD 启动、图纸创建、几何原语绘制、智能尺寸标注、参数化零件生成、视口全屏缩放及无缝视口截图。
+- **11 个 MCP 工具**，支持环境自检、图纸生成、CAXA 窗口操作和原分辨率截图。
 - **严格符合国家标准 (GB/T)**：
   - 图层、线型与线宽规范完全符合 **GB/T 14665**（粗实线 0.35mm、细实线 0.18mm、红点画中心线、黄虚线、青色尺寸线）；
   - 国标标准图框与标题栏符合 **GB/T 10609.1**（180mm × 56mm 标准签字栏与分区）；
   - 完美适配 A0、A1、A2、A3、A4 横竖版图幅。
 - **CAXA CAD 深度进程与窗口联动**：
   - 自动定位本机 CAXA 2023 安装路径（`CDRAFT_M.exe`）；
-  - 自动激活窗口并置顶；
-  - 自动执行全图适量缩放（`Zoom Extents`）；
-  - 免人工干预视口高清截图回传给大模型。
+  - 优先在现有 CAXA 实例中打开图纸，并核对窗口标题后返回结果；
+  - 自动预览打开带版本编号的临时 DXF，生成工具可继续写源 DXF；
+  - 可保存 CAXA 窗口 PNG，也可通过 MCP 直接返回 PNG。
 - **解决字体缺失弹窗**：
   - 内置 `Standard` 样式映射至 CAXA 原生 `ACADTXT.SHX`；
   - 中文文字样式映射至 `SimHei` 黑体，彻底杜绝 CAXA 打开 DXF 时的“缺少字体”弹窗提示。
@@ -149,10 +149,15 @@ pip install -e .
 | `caxa_draw_primitives` | 批量绘制几何图元（直线、圆、圆弧、矩形、多段线、文字等） | `primitives` (图元列表), `auto_save` |
 | `caxa_draw_dimension` | 绘制标准机械尺寸标注（线性尺寸、直径尺寸、半径尺寸） | `dim_type` (HORIZONTAL/VERTICAL/ALIGNED/DIAMETER/RADIUS), `points` |
 | `caxa_draw_parametric_part` | 参数化快速绘制标准机械零件 | `part_type` (stepped_shaft / flange / plate), `params` |
-| `caxa_open_drawing` | 控制 CAXA CAD 打开指定 DXF/DWG 图纸并全屏展现 | `file_path`, `zoom_extents` |
+| `caxa_open_drawing` | 在 CAXA 中打开 DXF、DWG 或 EXB，返回是否确认加载 | `file_path`, `zoom_extents`（可选，尝试发送 Z/E 快捷键） |
 | `caxa_send_command` | 向 CAXA 窗口发送 CAD 命令快捷键或执行宏 | `command_string`, `press_enter` |
-| `caxa_capture_screen` | 捕获当前 CAXA CAD 绘图视口截图回传大模型 | `output_path` |
+| `caxa_capture_screen` | 原分辨率截图保存到本地，返回文件路径 | `output_path` |
+| `caxa_capture_view` | 将 CAXA 窗口原分辨率 PNG 直接返回给 MCP 客户端 | 无 |
 | `caxa_export_drawing` | 将当前绘制成果导出保存为指定文件 | `output_path` |
+
+CAXA 窗口操作需要已登录且未锁屏的 Windows 桌面。若 CAXA 弹出字体替换等对话框，先在 CAXA 中处理，再重试工具。打开失败时查看返回的 `error`。
+
+连续绘图时可以把图元和尺寸工具的 `auto_save_and_open` 设为 `false`，完成后调用一次 `caxa_open_drawing` 预览。生成工具返回的 `file_path` 或 `saved_path` 指向实际保存的 DXF。默认生成路径和预览副本都是会话临时文件，需要保留时用 `caxa_export_drawing` 导出到自己的目录，或在新建图纸时指定 `save_path`。
 
 ---
 

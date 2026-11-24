@@ -6,10 +6,14 @@ Model Context Protocol (MCP) server providing AI agents with the ability to:
 """
 
 import os
+import shutil
 import sys
 import tempfile
+from io import BytesIO
+from itertools import count
+from pathlib import Path
 from typing import List, Dict, Any, Optional
-from mcp.server.fastmcp import FastMCP
+from mcp.server.fastmcp import FastMCP, Image
 
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 if CURRENT_DIR not in sys.path:
@@ -25,11 +29,22 @@ except ImportError:
 # Initialize FastMCP Server
 mcp = FastMCP("caxa-cad-server")
 
-# Global session state
-DEFAULT_DRAWING_PATH = os.path.abspath(os.path.join(CURRENT_DIR, "..", "caxa_active_drawing.dxf"))
+# Keep writable drawing and CAXA preview files separate for this server session.
+_session_dir = tempfile.TemporaryDirectory(prefix="caxa-mcp-", ignore_cleanup_errors=True)
+_preview_number = count(1)
+DEFAULT_DRAWING_PATH = os.path.join(_session_dir.name, "caxa_active_drawing.dxf")
 current_engine: Optional[CADEngine] = None
 active_dxf_path: str = DEFAULT_DRAWING_PATH
 controller = CAXAController()
+
+
+def _open_generated_file(source_path: str) -> Dict[str, Any]:
+    source = Path(source_path)
+    if not source.is_file():
+        raise FileNotFoundError(f"Drawing file not found: {source}")
+    preview = Path(_session_dir.name) / f"{source.stem}_preview_{next(_preview_number):03}{source.suffix}"
+    shutil.copyfile(source, preview)
+    return {**controller.open_drawing(str(preview)), "source_file": str(source)}
 
 
 def _get_or_create_engine() -> CADEngine:
@@ -108,17 +123,14 @@ def caxa_create_drawing(
 
     saved_file = current_engine.save(active_dxf_path)
 
-    open_result = None
-    if auto_open:
-        open_result = controller.open_drawing(saved_file)
-        controller.zoom_extents()
+    open_result = _open_generated_file(saved_file) if auto_open else None
 
     return {
         "status": "success",
         "file_path": saved_file,
         "paper_size": paper_size,
         "drawing_area": frame_info["drawing_area"],
-        "opened_in_caxa": auto_open,
+        "opened_in_caxa": bool(open_result and open_result["success"]),
         "open_result": open_result,
     }
 
@@ -204,17 +216,15 @@ def caxa_draw_primitives(
 
     saved_file = engine.save(active_dxf_path)
 
-    open_res = None
-    if auto_save_and_open:
-        open_res = controller.open_drawing(saved_file)
-        controller.zoom_extents()
+    open_result = _open_generated_file(saved_file) if auto_save_and_open else None
 
     return {
         "status": "success",
         "entities_drawn": drawn_count,
         "errors": errors,
         "saved_path": saved_file,
-        "opened_in_caxa": auto_save_and_open,
+        "opened_in_caxa": bool(open_result and open_result["success"]),
+        "open_result": open_result,
     }
 
 
@@ -245,9 +255,7 @@ def caxa_draw_dimension(
         override_text=override_text,
     )
     saved_file = engine.save(active_dxf_path)
-    if auto_save_and_open:
-        controller.open_drawing(saved_file)
-        controller.zoom_extents()
+    open_result = _open_generated_file(saved_file) if auto_save_and_open else None
 
     return {
         "status": "success",
@@ -255,6 +263,8 @@ def caxa_draw_dimension(
         "p1": p1,
         "p2": p2,
         "saved_path": saved_file,
+        "opened_in_caxa": bool(open_result and open_result["success"]),
+        "open_result": open_result,
     }
 
 
@@ -337,28 +347,35 @@ def caxa_draw_parametric_part(
         raise ValueError(f"Unsupported part_type: {part_type}. Supported: 'stepped_shaft', 'flange', 'mounting_plate'")
 
     saved_file = engine.save(active_dxf_path)
-    if auto_open:
-        controller.open_drawing(saved_file)
-        controller.zoom_extents()
+    open_result = _open_generated_file(saved_file) if auto_open else None
 
     return {
         "status": "success",
         "part_type": pt,
         "details": res,
         "saved_path": saved_file,
+        "opened_in_caxa": bool(open_result and open_result["success"]),
+        "open_result": open_result,
     }
 
 
 @mcp.tool()
-def caxa_open_drawing(file_path: Optional[str] = None) -> Dict[str, Any]:
+def caxa_open_drawing(
+    file_path: Optional[str] = None,
+    zoom_extents: bool = False,
+) -> Dict[str, Any]:
     """
     Open any CAD drawing (.dxf, .dwg, .exb) inside CAXA CAD 2023.
-    If file_path is omitted, opens the currently active drawing.
+    If file_path is omitted, opens a preview copy of the current generated drawing.
+    If zoom_extents is true, also try sending the Z/E shortcuts after opening.
     """
-    target = file_path if file_path else active_dxf_path
-    res = controller.open_drawing(target)
-    controller.zoom_extents()
-    return res
+    result = controller.open_drawing(file_path) if file_path else _open_generated_file(active_dxf_path)
+    if zoom_extents:
+        hwnd = result["status"]["main_hwnd"]
+        result["zoom_command_sent"] = bool(
+            result["success"] and hwnd and controller.zoom_extents(int(hwnd, 16))
+        )
+    return result
 
 
 @mcp.tool()
@@ -377,7 +394,7 @@ def caxa_send_command(command: str) -> Dict[str, Any]:
 @mcp.tool()
 def caxa_capture_screen(output_path: Optional[str] = None) -> Dict[str, Any]:
     """
-    Capture a screenshot of CAXA CAD's drawing canvas for AI visual inspection.
+    Save the CAXA window at native resolution and return its local file path.
     """
     if not output_path:
         out = os.path.join(tempfile.gettempdir(), "caxa_viewport.png")
@@ -389,6 +406,17 @@ def caxa_capture_screen(output_path: Optional[str] = None) -> Dict[str, Any]:
         "success": cap is not None,
         "screenshot_path": cap,
     }
+
+
+@mcp.tool()
+def caxa_capture_view() -> Image:
+    """Return a native-resolution PNG of the CAXA window directly over MCP."""
+    snapshot = controller.capture_window()
+    if snapshot is None:
+        raise RuntimeError("Could not capture CAXA. Check that its window is visible and no dialog is open.")
+    buffer = BytesIO()
+    snapshot.save(buffer, format="PNG")
+    return Image(data=buffer.getvalue(), format="png")
 
 
 @mcp.tool()
